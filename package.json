@@ -1,0 +1,21 @@
+{
+  "name": "venturelens-backend",
+  "version": "0.1.0",
+  "description": "VentureLens: AI-powered business intelligence and growth co-pilot (backend)",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "@anthropic-ai/sdk": "^1.10.0",
+    "ajv": "^8.20.0",
+    "dotenv": "^18.0.10",
+    "express": "^5.3.0"
+  }
+}
