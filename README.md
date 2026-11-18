@@ -150,3 +150,42 @@ test/                       node:test suites
 - `npm start`: start
 - `npm test`: run tests (no network, no API calls; live mode uses a fake client)
 - `scripts/live-smoke.js`: ONE real, low-budget research run. Spends API credits; never run by `npm test`. See the script header.
+
+## Deployment (Docker on a VPS)
+
+`Dockerfile` builds the React app and runs Express as the non-root `node` user, serving the frontend and API from one origin on port 3000. `docker-compose.yml` runs it behind Caddy, which terminates HTTPS and is the only service with public ports.
+
+**Production defaults are enforced in `docker-compose.yml`:** `NODE_ENV=production`, `MOCK_MODE=true`, `LIVE_RESEARCH_ENABLED=false`. Paid live research is off and cannot be enabled from the env file.
+
+### 1. Server prerequisites
+- Docker Engine with the Compose plugin (v2.24 or later).
+- Firewall: allow inbound **80/tcp**, **443/tcp** and **443/udp**. Nothing else needs to be public (the app's port 3000 is not published).
+
+### 2. DNS
+Create an **A record** (and AAAA if the VPS has IPv6) for your domain, e.g. `app.example.com`, pointing at the VPS's public IP. Caddy obtains the HTTPS certificate automatically once DNS resolves to the server.
+
+### 3. Environment file (on the server only, never committed)
+```bash
+cp .env.example .env.production
+```
+Set at least:
+
+| Variable | Required | Notes |
+|---|---|---|
+| `DOMAIN` | yes | Public hostname, e.g. `app.example.com` |
+| `APP_API_KEY` | yes | `openssl rand -hex 32`. Used by Express and attached to `/api` requests by Caddy; never sent to browsers |
+| `ANTHROPIC_API_KEY` | no | Leave **empty** while live research is disabled |
+
+`.env.production` is git-ignored and excluded from the Docker build context. Another path can be used with `VL_ENV_FILE=/path/to/file`.
+
+### 4. Start
+```bash
+docker compose up -d --build
+docker compose ps            # app should be "healthy"
+docker compose logs -f caddy # watch certificate issuance
+```
+Update after pulling new code: `docker compose up -d --build`. Stop: `docker compose down`.
+
+### Notes
+- Caddy adds `Authorization: Bearer $APP_API_KEY` to `/api` requests, so the research endpoint is usable by anyone who can open the site. Keep live research disabled unless an access control is added.
+- With `NODE_ENV=production` (enforced by Compose), Express trusts exactly one proxy hop (Caddy), so rate limits apply per real visitor IP. Override with `TRUST_PROXY_HOPS` only if the number of proxies in front changes.

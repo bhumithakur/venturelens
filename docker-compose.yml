@@ -1,0 +1,54 @@
+# VentureLens production stack: Caddy (HTTPS, public) -> app (Express, private network only).
+# Secrets come from an external env file on the server (default: .env.production, never committed).
+services:
+  app:
+    build: .
+    image: venturelens:latest
+    restart: unless-stopped
+    env_file:
+      - path: ${VL_ENV_FILE:-.env.production}
+        required: true
+    # Enforced production defaults: these override the env file, so paid live research
+    # cannot be switched on by accident. Change them here deliberately if ever needed.
+    environment:
+      NODE_ENV: production
+      PORT: "3000"
+      MOCK_MODE: "true"
+      LIVE_RESEARCH_ENABLED: "false"
+    expose:
+      - "3000" # reachable by Caddy on the internal network only; not published on the host
+    networks:
+      - internal
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    # Caddy needs DOMAIN, and APP_API_KEY to attach it to /api requests server-side.
+    env_file:
+      - path: ${VL_ENV_FILE:-.env.production}
+        required: true
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    networks:
+      - internal
+
+networks:
+  internal:
+
+volumes:
+  caddy_data:
+  caddy_config:

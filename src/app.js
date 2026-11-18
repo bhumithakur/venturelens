@@ -2,6 +2,7 @@ import express from "express";
 import { existsSync } from "node:fs";
 import { extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { config } from "./config/env.js";
 import routes from "./routes/index.js";
 import { errorHandler, notFoundHandler } from "./middleware/error-handler.js";
 
@@ -33,9 +34,12 @@ function serveFrontend(app, webDist) {
   return true;
 }
 
-export function createApp({ webDist = DEFAULT_WEB_DIST } = {}) {
+export function createApp({ webDist = DEFAULT_WEB_DIST, trustProxyHops = config.trustProxyHops } = {}) {
   const app = express();
   app.disable("x-powered-by");
+  // With N trusted hops, req.ip is taken from X-Forwarded-For counting N entries from the right
+  // (the entries added by our own proxies), so client-supplied values further left are ignored.
+  app.set("trust proxy", trustProxyHops > 0 ? trustProxyHops : false);
   app.use(express.json({ limit: "100kb" }));
   app.use(routes);
   if (webDist) serveFrontend(app, webDist);

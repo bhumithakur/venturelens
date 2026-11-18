@@ -76,6 +76,11 @@ export function loadConfig(env = process.env) {
     // "development" or "test". They are always logged server-side.
     exposeErrorDetails: env.NODE_ENV === "development" || env.NODE_ENV === "test",
 
+    // Reverse-proxy hops to trust for the client IP (X-Forwarded-For). Production runs behind
+    // exactly one proxy (Caddy), so it defaults to 1 there; elsewhere 0, because trusting the
+    // header without a proxy in front would let any client forge its IP.
+    trustProxyHops: readNonNegativeInt(env, "TRUST_PROXY_HOPS", env.NODE_ENV === "production" ? 1 : 0),
+
     // Key clients must send to call protected endpoints. Unrelated to ANTHROPIC_API_KEY.
     appApiKey: env.APP_API_KEY || "",
 
