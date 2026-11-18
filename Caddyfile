@@ -1,0 +1,28 @@
+# VentureLens reverse proxy with automatic HTTPS (Let's Encrypt) for {$DOMAIN}.
+# DOMAIN and APP_API_KEY come from the environment; nothing secret is stored here.
+{$DOMAIN} {
+	encode zstd gzip
+
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-Frame-Options "DENY"
+		-Server
+	}
+
+	# API: attach the app key server-side. It replaces any client-sent Authorization header,
+	# and {env.*} is read at request time so the key is not written into Caddy's saved config.
+	@api path /api /api/*
+	handle @api {
+		reverse_proxy app:3000 {
+			header_up Authorization "Bearer {env.APP_API_KEY}"
+			header_up -X-Api-Key
+		}
+	}
+
+	# Frontend and /health.
+	handle {
+		reverse_proxy app:3000
+	}
+}
