@@ -10,6 +10,7 @@ const KEYS = {
   reports: "vl.reports.v1",
   financialsV1: "vl.financials.v1", // legacy: plain rental numbers, read only for migration
   financials: "vl.financials.v2", // versioned models: { version: 2, template, currency, inputs, ... }
+  growthPlans: "vl.growthPlans.v1", // [{ id, businessId, reportId|null, createdAt, result }]
 };
 
 const read = (key) => {
@@ -93,6 +94,19 @@ export const storage = {
     };
     write(KEYS.reports, [...all, report]);
     return report;
+  },
+};
+
+/** Marketing recommendations + action plans (growth-plan agent results). */
+export const growthPlans = {
+  listForBusiness: (businessId) =>
+    read(KEYS.growthPlans).filter((p) => p.businessId === businessId).sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+  /** Latest plan built from this research report (reportId null = built without research). */
+  latestFor: (businessId, reportId) => growthPlans.listForBusiness(businessId).find((p) => p.reportId === (reportId ?? null)) ?? null,
+  save({ businessId, reportId = null, result }) {
+    const plan = { id: newId(), createdAt: new Date().toISOString(), businessId, reportId, result };
+    write(KEYS.growthPlans, [...read(KEYS.growthPlans), plan]);
+    return plan;
   },
 };
 

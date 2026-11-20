@@ -36,4 +36,7 @@ export const api = {
    */
   runMarketResearch: (input, { signal, mode = "mock" } = {}) =>
     request(`/api/agents/market-research/run?mode=${encodeURIComponent(mode)}`, { method: "POST", body: JSON.stringify(input), signal }),
+  /** Synthesizes marketing recommendations + action plan from existing agent outputs (see lib/growthPlan.js). */
+  runGrowthPlan: (input, { signal, mode = "mock" } = {}) =>
+    request(`/api/agents/growth-plan/run?mode=${encodeURIComponent(mode)}`, { method: "POST", body: JSON.stringify(input), signal }),
 };

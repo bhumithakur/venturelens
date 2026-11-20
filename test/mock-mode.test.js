@@ -32,7 +32,7 @@ test("GET /health reports mock mode and the registered agent", async () => {
   const body = await (await fetch(`${base}/health`)).json();
   assert.equal(body.status, "ok");
   assert.equal(body.mockMode, true);
-  assert.deepEqual(body.agents, ["market-research"]);
+  assert.deepEqual(body.agents, ["market-research", "growth-plan"]);
 });
 
 test("POST run returns a schema-valid mock report", async () => {

@@ -1,14 +1,16 @@
 import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { Link, useOutletContext, useParams } from "react-router-dom";
-import { AlertCircle, Building2, FileSearch, FlaskConical, Globe, Loader2, RotateCcw, SearchX, Sparkles, X } from "lucide-react";
+import { AlertCircle, ArrowRight, Building2, FileSearch, FlaskConical, Globe, ListChecks, Loader2, RotateCcw, SearchX, Sparkles, X } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button, buttonVariants } from "@/components/ui/button";
 import { ReportView } from "@/components/research/ReportView";
 import { api } from "@/lib/api";
-import { storage, toResearchInput, useStorageVersion } from "@/lib/storage";
+import { financials, growthPlans, storage, toResearchInput, useStorageVersion } from "@/lib/storage";
+import { toGrowthPlanInput } from "@/lib/growthPlan";
 import { cn, formatDate } from "@/lib/utils";
 
+const GrowthPlanView = lazy(() => import("@/components/strategy/GrowthPlanView").then((m) => ({ default: m.GrowthPlanView })));
 const FinancialAnalyst = lazy(() => import("@/components/finance/FinancialAnalyst").then((m) => ({ default: m.FinancialAnalyst })));
 
 /** Friendly copy for backend / proxy error codes. Falls back to the server's own message. */
@@ -36,13 +38,18 @@ export function BusinessWorkspace() {
   const [mode, setMode] = useState("mock"); // always starts as mock; live must be chosen each time
   const [confirming, setConfirming] = useState(false);
   const [selectedId, setSelectedId] = useState(null);
-  const [tab, setTab] = useState("research"); // research | financials
+  const [tab, setTab] = useState("research"); // research | plan | financials
   const [state, setState] = useState({ status: "idle" }); // idle | loading | error
+  const [planState, setPlanState] = useState({ status: "idle" }); // idle | loading | error
   const controller = useRef(null);
+  const planController = useRef(null);
   const [elapsed, setElapsed] = useState(0);
 
   // Abort an in-flight request if the user leaves the page.
-  useEffect(() => () => controller.current?.abort(), []);
+  useEffect(() => () => {
+    controller.current?.abort();
+    planController.current?.abort();
+  }, []);
   useEffect(() => {
     if (state.status !== "loading") return;
     const started = Date.now();
@@ -53,6 +60,33 @@ export function BusinessWorkspace() {
   if (!business) return <NotFound />;
 
   const selected = reports.find((r) => r.id === selectedId) ?? reports[0] ?? null;
+  const plan = growthPlans.latestFor(business.id, selected?.result?.report ? selected.id : null);
+
+  /**
+   * Synthesis step: marketing recommendations + prioritized action plan from the existing
+   * agent outputs (this research report + the saved financial model). Either may be missing.
+   */
+  async function generatePlan(runMode, reportRecord) {
+    if (runMode === "live" && !liveAvailable) runMode = "mock";
+    planController.current?.abort();
+    planController.current = new AbortController();
+    const research = reportRecord?.result?.report ? reportRecord : null;
+    setPlanState({ status: "loading", mode: runMode });
+    try {
+      const input = toGrowthPlanInput(business, research?.result, financials.get(business.id));
+      const result = await api.runGrowthPlan(input, { signal: planController.current.signal, mode: runMode });
+      growthPlans.save({ businessId: business.id, reportId: research?.id ?? null, result });
+      setPlanState({ status: "idle" });
+    } catch (err) {
+      if (err?.name === "AbortError" || planController.current?.signal.aborted) return setPlanState({ status: "idle" });
+      setPlanState({ status: "error", error: err });
+    }
+  }
+
+  function onGeneratePlanClick() {
+    if (mode === "live" && !window.confirm("Generate the growth plan with Claude? This uses Anthropic API credits (no web search).")) return;
+    generatePlan(mode, selected);
+  }
 
   function onGenerateClick() {
     if (mode === "live") setConfirming(true); // live always needs an explicit confirmation
@@ -72,6 +106,7 @@ export function BusinessWorkspace() {
       setSelectedId(saved.id);
       setState({ status: "idle" });
       setMode("mock"); // after a live run, go back to the free default
+      generatePlan(runMode, saved); // final synthesis: marketing recommendations + action plan
     } catch (err) {
       if (err?.name === "AbortError" || controller.current?.signal.aborted) {
         setState({ status: "idle" });
@@ -126,7 +161,7 @@ export function BusinessWorkspace() {
       </Card>
 
       <div role="tablist" aria-label="Workspace sections" className="flex gap-1 border-b border-slate-200">
-        {[["research", "Market Research"], ["financials", "Financials"]].map(([key, label]) => (
+        {[["research", "Market Research"], ["plan", "Marketing & Action Plan"], ["financials", "Financials"]].map(([key, label]) => (
           <button key={key} role="tab" aria-selected={tab === key} onClick={() => setTab(key)}
             className={cn("-mb-px border-b-2 px-3 py-2 text-sm font-medium transition-colors",
               tab === key ? "border-brand-600 text-brand-700" : "border-transparent text-slate-500 hover:text-slate-800")}>
@@ -139,6 +174,10 @@ export function BusinessWorkspace() {
         <Suspense fallback={<div className="h-64 animate-pulse rounded-xl border border-slate-200 bg-white" />}>
           <FinancialAnalyst business={business} />
         </Suspense>
+      ) : tab === "plan" ? (
+        <PlanTab plan={plan} planState={planState} hasResearch={Boolean(selected?.result?.report)} mode={mode}
+          onGenerate={onGeneratePlanClick} onCancel={() => planController.current?.abort()}
+          onDismiss={() => setPlanState({ status: "idle" })} />
       ) : (
       <>
       {confirming && <LiveConfirm onConfirm={() => generate("live")} onCancel={() => setConfirming(false)} />}
@@ -147,6 +186,9 @@ export function BusinessWorkspace() {
         <ErrorState error={state.error} onRetry={onGenerateClick} onDismiss={() => setState({ status: "idle" })} />
       )}
 
+      {!loading && selected?.result?.report && (
+        <PlanCallout plan={plan} planState={planState} onView={() => setTab("plan")} onGenerate={onGeneratePlanClick} />
+      )}
       {!loading && selected?.result?.report ? (
         <div className={cn(state.status === "error" && "opacity-60")}>
           <ReportView result={selected.result} />
@@ -231,14 +273,95 @@ function LoadingState({ live, elapsed, onCancel }) {
   );
 }
 
-function ErrorState({ error, onRetry, onDismiss }) {
+function PlanCallout({ plan, planState, onView, onGenerate }) {
+  const busy = planState.status === "loading";
+  return (
+    <div className="flex flex-col gap-3 rounded-xl border border-brand-200 bg-brand-50/60 p-4 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex gap-3">
+        <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-white text-brand-600 ring-1 ring-brand-100">
+          {busy ? <Loader2 className="size-4 animate-spin" /> : <ListChecks className="size-4" />}
+        </span>
+        <div className="text-sm">
+          <p className="font-semibold text-slate-900">Marketing recommendations & action plan</p>
+          <p className="text-slate-600">
+            {busy ? "Building your plan from this research and your financials…"
+              : planState.status === "error" ? "The plan could not be generated. Open the tab for details."
+              : plan ? `${plan.result.plan.action_plan.length} prioritized tasks, channels, campaigns and positioning for this business.`
+              : "Turn this research and your financials into channels, campaigns and a prioritized to-do list."}
+          </p>
+        </div>
+      </div>
+      {plan || busy || planState.status === "error" ? (
+        <Button size="sm" onClick={onView}>View plan <ArrowRight /></Button>
+      ) : (
+        <Button size="sm" onClick={onGenerate}><Sparkles /> Generate plan</Button>
+      )}
+    </div>
+  );
+}
+
+function PlanTab({ plan, planState, hasResearch, mode, onGenerate, onCancel, onDismiss }) {
+  const busy = planState.status === "loading";
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col gap-3 rounded-xl border border-slate-200 bg-white p-4 sm:flex-row sm:items-center sm:justify-between">
+        <p className="text-sm text-slate-600">
+          Synthesized from {hasResearch ? "the selected market research report" : <span className="font-medium text-amber-700">your business profile only (no research yet)</span>}
+          {" "}and your saved financial model. Updates when you regenerate.
+        </p>
+        <div className="flex shrink-0 gap-2">
+          {busy && <Button variant="outline" size="sm" onClick={onCancel}><X /> Cancel</Button>}
+          <Button size="sm" onClick={onGenerate} disabled={busy}>
+            {busy ? <Loader2 className="animate-spin" /> : plan ? <RotateCcw /> : <Sparkles />}
+            {busy ? "Generating…" : plan ? "Regenerate plan" : "Generate plan"}{!busy && mode === "live" ? " (live)" : ""}
+          </Button>
+        </div>
+      </div>
+      {planState.status === "error" && (
+        <ErrorState title="Plan generation failed" error={planState.error} onRetry={onGenerate} onDismiss={onDismiss} />
+      )}
+      {busy ? (
+        <Card>
+          <CardContent className="space-y-4 p-6" aria-live="polite">
+            <div className="flex items-center gap-3">
+              <Loader2 className="size-5 animate-spin text-brand-600" />
+              <p className="text-sm font-medium text-slate-900">
+                {planState.mode === "live" ? "Claude is synthesizing your marketing recommendations and action plan… (usually under a minute)" : "Generating mock plan…"}
+              </p>
+            </div>
+            <div className="grid gap-3 md:grid-cols-3">{[0, 1, 2].map((i) => <div key={i} className="h-20 animate-pulse rounded-lg bg-slate-100" />)}</div>
+          </CardContent>
+        </Card>
+      ) : plan ? (
+        <Suspense fallback={<div className="h-64 animate-pulse rounded-xl border border-slate-200 bg-white" />}>
+          <GrowthPlanView result={plan.result} />
+        </Suspense>
+      ) : (
+        planState.status !== "error" && (
+          <Card>
+            <CardContent className="flex flex-col items-center p-12 text-center">
+              <span className="flex size-12 items-center justify-center rounded-xl bg-brand-50 text-brand-600"><ListChecks className="size-6" /></span>
+              <p className="mt-4 text-sm font-semibold text-slate-900">No marketing plan yet</p>
+              <p className="mt-1 max-w-md text-sm text-slate-500">
+                Get recommended channels, acquisition strategies, campaign ideas, brand positioning and a prioritized
+                5–7 step action plan built from your research and financials.
+              </p>
+            </CardContent>
+          </Card>
+        )
+      )}
+    </div>
+  );
+}
+
+function ErrorState({ error, onRetry, onDismiss, title = "Research failed" }) {
   const copy = ERROR_COPY[error?.code] ?? error?.message ?? "Something went wrong.";
   const fields = Array.isArray(error?.details) ? error.details : null;
   return (
     <div role="alert" className="flex gap-3 rounded-xl border border-rose-200 bg-rose-50 p-4">
       <AlertCircle className="mt-0.5 size-5 shrink-0 text-rose-600" />
       <div className="flex-1 text-sm">
-        <p className="font-medium text-rose-900">Research failed</p>
+        <p className="font-medium text-rose-900">{title}</p>
         <p className="mt-0.5 text-rose-800">{copy}</p>
         {fields && (
           <ul className="mt-2 list-disc pl-5 text-xs text-rose-700">
