@@ -88,6 +88,10 @@ The run endpoint allows `RATE_LIMIT_MAX` requests (default 10) per client IP per
 
 Unexpected errors return `500` with a generic message and an `errorId`; the full error is logged server-side under that id. Internal messages are returned to clients only when `NODE_ENV` is exactly `development` or `test`. A missing `NODE_ENV` is treated as production.
 
+### Growth Plan agent
+
+`POST /api/agents/growth-plan/run` turns the outputs of the existing agents into marketing recommendations (positioning, channels, acquisition strategies, campaign ideas) and a prioritized 5-7 task action plan. It does no web search. Its input is the business profile plus optional compact summaries of a market research report (`research`) and the saved financial model (`financials`); the web app builds these from what it has stored and the plan lists any missing inputs in `data_gaps`. Mock mode builds a rule-based plan from the inputs; live mode makes one Claude call. Live runs share the live rate limit with market research.
+
 ### Market Research input
 
 ```json
@@ -126,6 +130,7 @@ src/
   services/pricing.js          price table for cost estimates
   agents/
     index.js                agent registry
+    growth-plan/            marketing recommendations + action plan (synthesis, no web search)
     market-research/
       *.instructions.js     system prompt + user message builder
       *.schema.js           output JSON Schema (+ validator)
@@ -155,7 +160,7 @@ test/                       node:test suites
 
 `Dockerfile` builds the React app and runs Express as the non-root `node` user, serving the frontend and API from one origin on port 3000. `docker-compose.yml` runs it behind Caddy, which terminates HTTPS and is the only service with public ports.
 
-**Production defaults are enforced in `docker-compose.yml`:** `NODE_ENV=production`, `MOCK_MODE=true`, `LIVE_RESEARCH_ENABLED=false`. Paid live research is off and cannot be enabled from the env file.
+**Production settings are enforced in `docker-compose.yml`** (they override the env file): `NODE_ENV=production`, `MOCK_MODE=true`, `LIVE_RESEARCH_ENABLED=true`. Mock data stays the default; live Claude runs (Market Research and Growth Plan) happen only when a user picks **Live research** in the app and confirms the run. Because live is enabled, `ANTHROPIC_API_KEY` is **required**: the app refuses to start without it. To disable live runs, set `LIVE_RESEARCH_ENABLED: "false"` in `docker-compose.yml` and run `docker compose up -d`.
 
 ### 1. Server prerequisites
 - Docker Engine with the Compose plugin (v2.24 or later).
@@ -174,7 +179,9 @@ Set at least:
 |---|---|---|
 | `DOMAIN` | yes | Public hostname, e.g. `app.example.com` |
 | `APP_API_KEY` | yes | `openssl rand -hex 32`. Used by Express and attached to `/api` requests by Caddy; never sent to browsers |
-| `ANTHROPIC_API_KEY` | no | Leave **empty** while live research is disabled |
+| `ANTHROPIC_API_KEY` | yes | Anthropic key for live runs. Server-side only: never sent to browsers, never in the image |
+
+Optional live-run limits (defaults in `.env.example`): `LIVE_RATE_LIMIT_MAX` / `LIVE_RATE_LIMIT_WINDOW_MS` (live runs per visitor IP, default 5 per hour; a research run plus its growth plan counts as 2), `CLAUDE_MODEL`, `WEB_SEARCH_MAX_USES`, `WEB_SEARCH_MAX_TOTAL`. Set a monthly spend limit for the key in the Anthropic Console.
 
 `.env.production` is git-ignored and excluded from the Docker build context. Another path can be used with `VL_ENV_FILE=/path/to/file`.
 
@@ -184,8 +191,13 @@ docker compose up -d --build
 docker compose ps            # app should be "healthy"
 docker compose logs -f caddy # watch certificate issuance
 ```
-Update after pulling new code: `docker compose up -d --build`. Stop: `docker compose down`.
+Update after pulling new code: `docker compose up -d --build` (recreates only the app container; Caddy, its certificates and volumes are kept). Stop: `docker compose down` (never add `-v`: that deletes Caddy's certificates).
+
+Check that live runs are available:
+```bash
+docker compose exec app wget -qO- http://127.0.0.1:3000/health   # "liveResearchAvailable":true
+```
 
 ### Notes
-- Caddy adds `Authorization: Bearer $APP_API_KEY` to `/api` requests, so the research endpoint is usable by anyone who can open the site. Keep live research disabled unless an access control is added.
+- Caddy adds `Authorization: Bearer $APP_API_KEY` to `/api` requests, so the agents are usable by anyone who can open the site, **including live (paid) runs**. The per-IP live rate limit is the only cap in the app: set a spend limit in the Anthropic Console, and add an access control (e.g. Caddy `basic_auth`) if the site should not be public.
 - With `NODE_ENV=production` (enforced by Compose), Express trusts exactly one proxy hop (Caddy), so rate limits apply per real visitor IP. Override with `TRUST_PROXY_HOPS` only if the number of proxies in front changes.

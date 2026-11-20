@@ -8,13 +8,16 @@ services:
     env_file:
       - path: ${VL_ENV_FILE:-.env.production}
         required: true
-    # Enforced production defaults: these override the env file, so paid live research
-    # cannot be switched on by accident. Change them here deliberately if ever needed.
+    # Enforced production settings: these override the env file.
+    # Mock stays the default; live (paid) Claude runs are allowed only when a request explicitly
+    # asks for ?mode=live (the UI requires choosing "Live research" and confirming each run).
+    # Requires ANTHROPIC_API_KEY in the env file: the app refuses to start without it.
+    # To turn live runs off again, set LIVE_RESEARCH_ENABLED to "false" and run `docker compose up -d`.
     environment:
       NODE_ENV: production
       PORT: "3000"
       MOCK_MODE: "true"
-      LIVE_RESEARCH_ENABLED: "false"
+      LIVE_RESEARCH_ENABLED: "true"
     expose:
       - "3000" # reachable by Caddy on the internal network only; not published on the host
     networks:
